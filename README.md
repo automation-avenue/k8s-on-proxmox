@@ -5,7 +5,7 @@ My DHCP scope is `192.168.1.2` - `192.168.1.99` <br />
 so any addresses from `192.168.1.100` to `192.168.1.254` can be assigned statically. <br />
 
 We can now log on to Proxmox and we need to create 3 Linux Virtual Machines <br />
-One for kubernetes Master Node and 2 for Worker Nodes. <br />
+One for kubernetes Master Node and 2 for Worker Nodes (you can create more nodes if you wish, its just an example). <br />
 Master Node is there to act as cluster administrator and worker nodes are the ones actually running containers <br />
 
 While any linux kernel based system can run kubernetes, the easiest way to follow this guide is when you run <br />
@@ -105,7 +105,7 @@ qm create 191 \
   --scsi0 local-lvm:50,discard=on,iothread=1,ssd=1
   ```
 <br />
-but you simply have to build it based on the output of your conf file, or simply just go through the manual process of VM creation <br />
+but you simply have to build it based on the output of your conf file, or simply just go through the manual process of VM creation - whichever you find easier. <br />
 
 ***
 
@@ -167,9 +167,10 @@ EOF
 ```
 
 If we run `cat /etc/modules-load.d/k8s.conf` we can see those 2 lines added to that k8s.conf file <br />
-This will make sure we have them configured and it survives reboots. <br />
+When your Linux system boots up, it reads all files in that directory and automatically loads the listed modules. <br />
+It ensures the overlay (for containers) and br_netfilter (for bridge networking) are always there even after reboots. <br />
 
-We can run below commands to apply the same to current session <br />
+We can then run below commands to load these modules into memory immediately without the need to reboot the system: <br />
 ```
 sudo modprobe overlay
 sudo modprobe br_netfilter
@@ -177,9 +178,10 @@ sudo modprobe br_netfilter
 
 Overlay File System is a file system used by docker images, so its necessary for kuberenetes as it job is to manage docker containers. <br />
 BR Netfilter in technical terms allows the Linux kernel to pass traffic flowing through a network bridge (Layer 2) to the iptables/netfilter stack (Layer 3) for processing. <br />
-Basically another feature required by kubernetes to function properly. <br />
+Basically  overlay handles how containers see files, and br_netfilter handles how containers can talk to each other. <br />
 
-Below are system parameters, you can copy-paste them and they should persist across reboots <br />
+Below are system parameters, you can copy-paste them and they should persist across reboots. <br />
+Simply loading the previous module isn't enough - you also have to tell the kernel to actually use it for IPv4 and IPv6 traffic and that's why we need below: <br />
 
 ```
 cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
@@ -188,7 +190,6 @@ net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward                 = 1
 EOF
 ```
-Also required by kubernetes as it ensures that the Linux kernel doesn't just pass data through, but actively routes and filters it according to what the cluster needs. <br />
 
 We can check what has changed by running `cat /etc/sysctl.d/k8s.conf` <br />
 We should see those 3 lines from command above. <br />
@@ -201,7 +202,7 @@ We are ready now to install kubernetes components. First we need to run: <br />
 ```
 sudo apt install containerd -y
 ```
-<br />
+
 to install container runtime for our k8s cluster <br />
 Run `systemctl status containerd` to see if this service is up and running <br />
 
@@ -232,7 +233,7 @@ sudo systemctl status containerd
 We should see containerd service both - active and enabled (enabled means it will auto start after reboot) <br />
 
 Then we install all kubernetes components. <br />
-These commands will install curl and gpg commands, will add necessary repositories, will pull the packages and install them <br />
+These commands will install curl and gpg commands, will add necessary repositories, will pull the packages and install them: <br />
 
 ```
 sudo apt update && sudo apt install -y apt-transport-https ca-certificates curl gpg
@@ -249,8 +250,10 @@ sudo apt install -y kubelet kubeadm kubectl
 sudo apt-mark hold kubelet kubeadm kubectl
 
 ```
-This last command will lock the current version of kubelet, kubeadm and kubectl and this is advisable here because otherwise - if you run simple apt update and apt upgrade command - this could crash your kubernetes cluster. <br />
-We might want to upgrade them periodically but in a controlled way, and this 'hold' setting let's us do that <br />
+While kubelet, kubeadm and kubectl work together to run your cluster, they have very distinct jobs: one is the **worker**, one is the **installer**, and one is the **remote control**. <br />
+This last 'hold' command will lock the current version of kubelet, kubeadm and kubectl and this is advisable here because otherwise - if you run simple apt update and apt upgrade command - this could crash your kubernetes cluster. <br />
+You don't want a standard apt upgrade to accidentally update these components to a newer version that might be incompatible with your current cluster state. <br />
+We might want to upgrade them periodically but in a controlled way, and this 'hold' setting let's us do that. <br />
 
 Now we have all packages installed, so its time to initialize our kubernetes cluster. <br />
 
@@ -269,10 +272,12 @@ To initialize cluster on master node, we run:  <br />
 ```
 sudo kubeadm init --pod-network-cidr=10.244.0.0/16
 ```
-Do not fiddle with this ip prefix - it has nothing to do with our static DHCP scope on router. <br />
+Best is to not fiddle with this ip prefix - it has nothing to do with our static DHCP scope on router (the only requirement is that this prefix can't be the same as the one configured on our router).  <br />
+While generally you can change this 10.244.0.0/16 prefix, it actually needs to match the CNI component we are going to install shortly. <br />
+Because I am going to use Flannel - one of the most popular and simplest Container Network Plugin (CNI) - it uses that ip prefix so easiest for you to run this command as it is with that 10.244.0.0/16 ip prefix configured. <br />
 
-At the end of the process, this command generates a join command that we have to use on the worker nodes to join the cluster. <br />
-Note that this join command is valid for 24 hours <br />
+When we run that command - at the end of the process, this command generates another 'join' command that we have to use on the worker nodes to join the cluster. <br />
+Note that this join command is valid only for 24 hours <br />
 If you create another worker node and want to join that node like a week later, you will notice this command stopped working <br />
 You can refresh it with `kubeadm token create --print-join-command` <br />
 
@@ -283,9 +288,10 @@ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 ```
 
-Now we need to install so called CNI which is Container Network Interface, which is needed for our cluster, otherwise you will see the nodes in 'Not Ready' status. <br />
-Most popular CNI's are Flannel and Calico, I will go with Flannel but if you want to install Calico - its perfectly fine too <br />
-We also install that on master node only: <br />
+Now we need to install so called CNI which is Container Network Interface, which is needed for our cluster as it creates overlay network for communication inside kubernetes cluster. <br />
+If you dont't have CNI configured correctly, you will see all your nodes in 'Not Ready' status. <br />
+Most popular CNI's are Flannel and Calico, I will go with Flannel which I already mentioned before. <br />
+We install that on master node only: <br />
 
 ```
 kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
@@ -305,8 +311,8 @@ The 'worker' role is simply assumed there by default for any nodes that are not 
 So yes - it works! Our entire cluster works as expected. <br />
 At this stage you can deploy services to your new Kubernetes cluster. <br />
 
-You could in theory just play with what you already created, but you will notice one thing. <br />
-You can deploy services of type NodePort and HostNetwork, but if you want more Cloud-like solution, we can make our cluster even better. <br />
+You could in theory just play with what you already created, but you will very quickly notice one big limitation - you dont have kubernetes service called 'LoadBalancer' available. <br />
+You can deploy services of type NodePort or you can create HostNetwork, but if you want more Cloud-like solution, we can make our cluster better. <br />
 To run services of type LoadBalancer, probably the easiest way is to add MetalLB service to our cluster. <br />
 ```
 kubectl edit configmap -n kube-system kube-proxy

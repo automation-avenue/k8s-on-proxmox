@@ -11,11 +11,9 @@ Master Node is there to act as cluster administrator and worker nodes are the on
 While any linux kernel based system can run kubernetes, the easiest way to follow this guide is when you run <br />
 either Ubuntu or other Debian based Linux OS. <br />
 
-I will go for Ubuntu 26.04 LTS, go here to download snapshot 3 of the image (full version to be released April 2026): <br />
-https://cdimage.ubuntu.com/ubuntu/releases/26.04/snapshot-3/ <br />
+I will go for Ubuntu 26.04 LTS, go to [THIS LINK](https://cdimage.ubuntu.com/ubuntu-server/daily-live/current/) to download of the image <br />
 
-Scroll down to live server ISO file and click 'copy link address' which should be this one for amd64 architecture <br />
-https://cdimage.ubuntu.com/ubuntu/releases/26.04/snapshot-3/ubuntu-26.04-snapshot3-live-server-amd64.iso <br />
+Scroll down to live server ISO file and click 'copy link address' <br />
 
 Then click 'query link' in proxmox and download. <br />
 
@@ -42,7 +40,7 @@ qm create 191 \
   --numa 0 \
   --scsihw virtio-scsi-single \
   --net0 virtio,bridge=vmbr0,firewall=1 \
-  --ide2 local:iso/ubuntu-26.04-snapshot3-live-server-amd64.iso,media=cdrom \
+  --ide2 local:iso/ubuntu-26.04-live-server-amd64.iso,media=cdrom \
   --boot "order=scsi0;ide2;net0" \
   --scsi0 transcend:50,discard=on,iothread=1,ssd=1
   ```
@@ -61,7 +59,7 @@ qm create 192 \
   --numa 0 \
   --scsihw virtio-scsi-single \
   --net0 virtio,bridge=vmbr0,firewall=1 \
-  --ide2 local:iso/ubuntu-26.04-snapshot3-live-server-amd64.iso,media=cdrom \
+  --ide2 local:iso/ubuntu-26.04-live-server-amd64.iso,media=cdrom \
   --boot "order=scsi0;ide2;net0" \
   --scsi0 transcend:50,discard=on,iothread=1,ssd=1
 ```
@@ -80,7 +78,7 @@ qm create 193 \
   --numa 0 \
   --scsihw virtio-scsi-single \
   --net0 virtio,bridge=vmbr0,firewall=1 \
-  --ide2 local:iso/ubuntu-26.04-snapshot3-live-server-amd64.iso,media=cdrom \
+  --ide2 local:iso/ubuntu-26.04-live-server-amd64.iso,media=cdrom \
   --boot "order=scsi0;ide2;net0" \
   --scsi0 transcend:50,discard=on,iothread=1,ssd=1
   ```
@@ -227,6 +225,9 @@ And if we click up arrow to that grep command - you will see it is now set to 't
 
 ```
 sudo systemctl restart containerd
+```
+then <br />
+```
 sudo systemctl enable containerd
 sudo systemctl status containerd
 ```
